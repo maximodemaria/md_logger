@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("unifier")
 
-def unify_day(date_str: str, base_dir: str, delete_chunks: bool = False):
+def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
     """
     Unifica los chunks de una fecha dada.
     date_str: Formato YYYYMMDD

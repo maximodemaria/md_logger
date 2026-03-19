@@ -12,12 +12,15 @@ from config import (
     MARKET_END,
     MARKET_START,
     NUM_WORKERS,
+    PARQUET_DIR,
     log,
 )
+from datetime import datetime
 from conexion import prepare_system
 from utils import setup_signals, wait_for_market_open, is_market_open
 from process_manager import ProcessManager
 from stats import setup_central_metrics
+from parquet_unifier import unify_day
 
 
 def main() -> None:
@@ -51,22 +54,40 @@ def main() -> None:
 
     log.info("🔥 Sistema ONLINE. Monitoreando salud y horario...")
     try:
-        while not stop_event.is_set() and is_market_open(MARKET_END):
+        while not stop_event.is_set():
+            # 1. Verificar si el mercado ya cerró
+            if not is_market_open(MARKET_END):
+                log.info("🔔 Mercado cerrado (%s). Iniciando apagado programado...", MARKET_END)
+                stop_event.set()
+                break
+
+            # 2. Watchdog de salud
             try:
                 manager.check_health()
             except Exception as e:  # pylint: disable=broad-except
-                log.error("Error en el monitoreo: %s", e)
+                log.error("Error en el monitoreo de salud: %s", e)
 
-            # Esperar 10s en bloques de 1s para responder rápido al stop_event
+            # 3. Espera controlada (10s)
             for _ in range(10):
                 if stop_event.is_set():
                     break
                 time.sleep(1)
+
     except KeyboardInterrupt:
-        log.warning("⚠️ Interrupción detectada en el hilo principal.")
+        log.warning("⚠️ Interrupción manual detectada (Ctrl+C).")
+        stop_event.set()
     finally:
         # ── 5. Shutdown Limpio ───────────────────────────────────────────────
         manager.join_all()
+
+        # ── 6. Unificación Automática ────────────────────────────────────────
+        try:
+            date_str = datetime.now().strftime("%Y%m%d")
+            log.info("📦 Iniciando unificación automática de chunks para %s...", date_str)
+            unify_day(date_str, PARQUET_DIR, delete_chunks=True)
+        except Exception as e:
+            log.error("❌ Falló la unificación automática: %s", e)
+
         log.info("🏁 Sistema MD Logger finalizado.")
 
 
