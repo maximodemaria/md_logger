@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import multiprocessing
 import time
+from datetime import datetime
 
 from config import (
     MARKET_END,
@@ -15,7 +16,6 @@ from config import (
     PARQUET_DIR,
     log,
 )
-from datetime import datetime
 from conexion import prepare_system
 from utils import setup_signals, wait_for_market_open, is_market_open
 from process_manager import ProcessManager
@@ -29,9 +29,7 @@ def main() -> None:
     1. Registra señales.
     2. Espera apertura de mercado (si aplica).
     3. Inicializa el sistema (credenciales + catálogo).
-    4. Particiona la carga.
-    5. Lanza ProcessManager y su Watchdog con Agregador de Métricas.
-    6. Shutdown limpio al finalizar.
+    4. Lanzamiento y Control con unificador automático al final.
     """
     # ── 1. Señales y Horario ─────────────────────────────────────────────
     stop_event = multiprocessing.Event()
@@ -49,7 +47,9 @@ def main() -> None:
         return
 
     # ── 4. Lanzamiento y Control (ProcessManager) ────────────────────────
-    manager = ProcessManager(all_symbols, NUM_WORKERS, credentials, stop_event, metrics_queue)
+    manager = ProcessManager(
+        all_symbols, NUM_WORKERS, credentials, stop_event, metrics_queue
+    )
     manager.start_all()
 
     log.info("🔥 Sistema ONLINE. Monitoreando salud y horario...")
@@ -57,7 +57,10 @@ def main() -> None:
         while not stop_event.is_set():
             # 1. Verificar si el mercado ya cerró
             if not is_market_open(MARKET_END):
-                log.info("🔔 Mercado cerrado (%s). Iniciando apagado programado...", MARKET_END)
+                log.info(
+                    "🔔 Mercado cerrado (%s). Iniciando apagado programado...",
+                    MARKET_END
+                )
                 stop_event.set()
                 break
 
@@ -83,9 +86,9 @@ def main() -> None:
         # ── 6. Unificación Automática ────────────────────────────────────────
         try:
             date_str = datetime.now().strftime("%Y%m%d")
-            log.info("📦 Iniciando unificación automática de chunks para %s...", date_str)
+            log.info("📦 Iniciando unificación automática para %s...", date_str)
             unify_day(date_str, PARQUET_DIR, delete_chunks=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             log.error("❌ Falló la unificación automática: %s", e)
 
         log.info("🏁 Sistema MD Logger finalizado.")
