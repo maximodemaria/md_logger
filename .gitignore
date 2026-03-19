@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# Data
+*.csv
+*.parquet
+parquet_data/
+marketdata/
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.gemini/
