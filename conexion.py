@@ -72,25 +72,41 @@ def iniciar_conexion(user: str, password: str, broker: str) -> str:
 def obtener_instrumentos() -> list[str]:
     """
     Descarga el catálogo completo del broker y retorna la lista de símbolos.
-    También guarda una copia CSV diaria como caché.
+    Si la descarga falla, intenta cargar el caché de HOY. Si no existe caché de hoy,
+    lanza RuntimeError.
     """
-    log.info("Descargando catálogo completo de instrumentos...")
-    res = pyRofex.get_all_instruments()
-
-    if not res or "instruments" not in res:
-        raise RuntimeError("No se pudo obtener la lista de instrumentos del broker.")
-
-    symbols: list[str] = [
-        inst["instrumentId"]["symbol"] for inst in res["instruments"]
-    ]
-
-    # Guardar caché CSV diaria
     fecha = datetime.now().strftime("%Y-%m-%d")
-    csv_path = Path(f"instrumentos_{fecha}.csv")
-    pd.DataFrame(symbols, columns=["symbol"]).to_csv(csv_path, index=False)
+    cache_dir = Path("data") / "lista_instrumentos"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = cache_dir / f"instrumentos_{fecha}.csv"
 
-    log.info("✅ %d instrumentos descargados. Caché guardada en: %s", len(symbols), csv_path)
-    return symbols
+    try:
+        log.info("Descargando catálogo completo de instrumentos...")
+        res = pyRofex.get_all_instruments()
+
+        if res and "instruments" in res:
+            symbols: list[str] = [
+                inst["instrumentId"]["symbol"] for inst in res["instruments"]
+            ]
+            # Guardar/Actualizar caché CSV diaria
+            pd.DataFrame(symbols, columns=["symbol"]).to_csv(csv_path, index=False)
+            log.info("✅ %d instrumentos descargados. Caché guardada.", len(symbols))
+            return symbols
+
+        log.warning("⚠️ Respuesta inesperada del broker al obtener instrumentos.")
+    except Exception as exc:  # pylint: disable=broad-except
+        log.error("❌ Error al descargar instrumentos: %s", exc)
+
+    # Fallback: Solo si el archivo es de HOY
+    if csv_path.exists():
+        log.info("🔄 Usando caché local de instrumentos de HOY: %s", csv_path)
+        df = pd.read_csv(csv_path)
+        return df["symbol"].tolist()
+
+    raise RuntimeError(
+        f"No se pudo obtener la lista de instrumentos "
+        f"(descarga fallida y no hay caché de HOY: {csv_path})"
+    )
 
 
 def suscribir_tickers(

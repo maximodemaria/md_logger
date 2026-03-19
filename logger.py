@@ -69,11 +69,16 @@ def consumer_thread(
                 len(buffer),
                 msg_queue.qsize(),
             )
-            buffer.clear()
-            chunk_index += 1
-
+        except RuntimeError as rex:
+            if "interpreter shutdown" in str(rex):
+                logger.info("ℹ️ Parquet omitido: Intérprete cerrando.")
+            else:
+                logger.error("❌ RuntimeError al guardar Parquet: %s", rex)
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("❌ Error al guardar Parquet: %s", exc, exc_info=True)
+        finally:
+            buffer.clear()
+            chunk_index += 1
 
     while not stop_event.is_set():
         try:

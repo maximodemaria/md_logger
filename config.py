@@ -23,10 +23,12 @@ load_dotenv()
 NUM_WORKERS: int = 8          # Número de procesos paralelos
 BUFFER_SIZE: int = 5_000      # Mensajes acumulados antes de guardar Parquet
 SUBSCRIPTION_BATCH: int = 250 # Tickers por llamada de suscripción
-HEALTH_LOG_EVERY: int = 500   # Reportar estado cada N mensajes
+HEALTH_LOG_EVERY: int = 500   # (Legacy) Reportar cada N msgs
 GAP_WARN_SECS: float = 1.5    # Umbral de gap WebSocket para advertencia
 TIMEOUT_INACTIVO: float = 60.0 # Segundos sin mensajes antes de reintentar
-PARQUET_DIR: str = os.getenv("PARQUET_DIR", "marketdata")
+PARQUET_DIR: str = os.getenv("PARQUET_DIR", os.path.join("data", "marketdata"))
+LOGS_DIR: str = os.path.join("data", "logs")
+METRICS_INTERVAL_SECS: float = 1.0
 
 # Horario estricto de mercado (ROFEX)
 MARKET_START = time(10, 25)

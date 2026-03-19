@@ -24,10 +24,12 @@ class ProcessManager:
         num_workers: int,
         credentials: dict[str, str],
         stop_event: multiprocessing.Event,  # type: ignore[type-arg]
+        metrics_central_queue: multiprocessing.Queue | None = None,
     ) -> None:
         self.shards = splitter(all_symbols, num_workers)
         self.credentials = credentials
         self.stop_event = stop_event
+        self.metrics_central_queue = metrics_central_queue
         self.processes: list[multiprocessing.Process] = []
 
     def start_all(self) -> None:
@@ -36,7 +38,13 @@ class ProcessManager:
         for i, shard in enumerate(self.shards):
             p = multiprocessing.Process(
                 target=worker_process,
-                args=(i, shard, self.credentials, self.stop_event),
+                args=(
+                    i,
+                    shard,
+                    self.credentials,
+                    self.stop_event,
+                    self.metrics_central_queue
+                ),
                 name=f"md-worker-{i}",
                 daemon=False,
             )
@@ -48,13 +56,22 @@ class ProcessManager:
         """
         Verifica si algún proceso ha muerto y lo reinicia si es necesario.
         """
+        if self.stop_event.is_set():
+            return
+
         for i, p in enumerate(self.processes):
             if not (p and p.is_alive()):
                 log.warning("🚨 Worker %d caído. Reiniciando...", i)
 
                 nuevo_p = multiprocessing.Process(
                     target=worker_process,
-                    args=(i, self.shards[i], self.credentials, self.stop_event),
+                    args=(
+                        i,
+                        self.shards[i],
+                        self.credentials,
+                        self.stop_event,
+                        self.metrics_central_queue
+                    ),
                     name=f"md-worker-{i}",
                     daemon=False,
                 )

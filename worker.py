@@ -22,7 +22,7 @@ from config import BUFFER_SIZE, PARQUET_DIR, TIMEOUT_INACTIVO
 from conexion import iniciar_conexion, suscribir_tickers
 from handlers import WebSocketHandler
 from logger import consumer_thread
-from monitores import WorkerStats, metrics_thread
+from stats import WorkerStats, metrics_thread
 
 
 def worker_process(
@@ -30,6 +30,7 @@ def worker_process(
     symbols: list[str],
     credentials: dict[str, str],
     stop_event: multiprocessing.Event,  # type: ignore[type-arg]
+    metrics_central_queue: multiprocessing.Queue | None = None,
 ) -> None:
     """
     Coordinador del proceso hijo. Cada worker tiene su propio espacio de memoria.
@@ -91,36 +92,40 @@ def worker_process(
     )
     metrics_monitor = threading.Thread(
         target=metrics_thread,
-        args=(metrics_queue, stats, worker_id, logger, stop_threads),
+        args=(metrics_queue, stats, worker_id, logger, stop_threads, metrics_central_queue),
         name=f"metrics-w{worker_id}",
     )
 
-    consumer.start()
-    metrics_monitor.start()
-
-    # Suscripción
-    suscribir_tickers(symbols, worker_id, logger)
-
-    # ── 4. Ciclo de Vida ──────────────────────────────────────────────────
-    last_health_check = time.monotonic()
-    while not stop_event.is_set():
-        time.sleep(1.0)  # Verificación rápida del evento de parada
-
-        # Cada 15 segundos verificamos la inactividad por métricas
-        if time.monotonic() - last_health_check > 15:
-            if stats.is_inactive(TIMEOUT_INACTIVO):
-                logger.warning("⚠️ Worker %d inactivo por timeout. Reiniciando.", worker_id)
-                break
-            last_health_check = time.monotonic()
-
-    # ── 5. Shutdown ───────────────────────────────────────────────────────
-    logger.info("🛑 Worker %d: iniciando apagado...", worker_id)
     try:
-        pyRofex.close_websocket_connection()
-    except Exception:  # pylint: disable=broad-except
-        pass
+        consumer.start()
+        metrics_monitor.start()
 
-    stop_threads.set()
-    consumer.join(timeout=30)
-    metrics_monitor.join(timeout=5)
-    logger.info("✅ Worker %d apagado.", worker_id)
+        # Suscripción
+        suscribir_tickers(symbols, worker_id, logger)
+
+        # ── 4. Ciclo de Vida ──────────────────────────────────────────────────
+        last_health_check = time.monotonic()
+        while not stop_event.is_set():
+            time.sleep(1.0)
+            if time.monotonic() - last_health_check > 15:
+                if stats.is_inactive(TIMEOUT_INACTIVO):
+                    logger.warning("⚠️ Worker %d inactivo por timeout.", worker_id)
+                    break
+                last_health_check = time.monotonic()
+    except KeyboardInterrupt:
+        logger.warning("⚠️ Worker %d interrumpido por señal (Ctrl+C).", worker_id)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("💥 Worker %d error en ejecución: %s", worker_id, exc)
+    finally:
+        # ── 5. Shutdown ───────────────────────────────────────────────────────
+        logger.info("🛑 Worker %d: iniciando apagado...", worker_id)
+        try:
+            pyRofex.close_websocket_connection()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        stop_threads.set()
+        # Join con timeouts para evitar bloqueos eternos
+        consumer.join(timeout=10)
+        metrics_monitor.join(timeout=5)
+        logger.info("✅ Worker %d apagado correctamente.", worker_id)
