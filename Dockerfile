@@ -12,7 +12,10 @@ LABEL maintainer="MD Logger" \
 # Variables de entorno del sistema
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PARQUET_DIR=/data/parquet
+    PARQUET_DIR=/app/data/marketdata
+
+    RUN mkdir -p /app/data/marketdata
+    VOLUME ["/app/data/marketdata"]
 
 # Directorio de trabajo dentro del contenedor
 WORKDIR /app
