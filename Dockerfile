@@ -34,12 +34,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY .env* ./
 
-# Crear el directorio de salida de datos Parquet
-RUN mkdir -p /data/parquet
-
-# Montar volumen para persistir los Parquet fuera del contenedor
-VOLUME ["/data/parquet"]
-
 # Puerto de métricas (opcional para futura integración con Prometheus)
 # EXPOSE 8000
 
