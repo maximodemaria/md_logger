@@ -25,73 +25,103 @@ from parquet_unifier import unify_day
 
 def main() -> None:
     """
-    Orquestación minimalista del sistema:
-    1. Registra señales.
-    2. Espera apertura de mercado (si aplica).
-    3. Inicializa el sistema (credenciales + catálogo).
-    4. Lanzamiento y Control con unificador automático al final.
+    Orquestación autónoma del sistema:
+    1. Bucle infinito para ciclos diarios.
+    2. Espera apertura de mercado (soporta el día siguiente).
+    3. Inicialización y ejecución de la jornada.
+    4. Unificación al cierre y espera del nuevo ciclo.
     """
-    # ── 1. Señales y Horario ─────────────────────────────────────────────
-    stop_event = multiprocessing.Event()
-    setup_signals(stop_event)
-    wait_for_market_open(MARKET_START, stop_event)
+    while True:
+        # Cada ciclo diario (o reinicio), creamos un nuevo stop_event
+        stop_event = multiprocessing.Event()
+        setup_signals(stop_event)
 
-    # ── 2. Inicialización de Métricas Centralizadas ──────────────────────
-    metrics_queue = setup_central_metrics(stop_event)
+        # ── 1. Espera apertura de mercado ──────────────────────────────────
+        wait_for_market_open(MARKET_START, stop_event)
 
-    # ── 3. Inicialización Integral ───────────────────────────────────────
-    try:
-        all_symbols, credentials = prepare_system()
-    except Exception as exc:  # pylint: disable=broad-except
-        log.error("💥 Error crítico al preparar el sistema: %s", exc)
-        return
+        # Si durante la espera se recibió una señal de apagado manual (Ctrl+C / SIGTERM)
+        if stop_event.is_set():
+            break
 
-    # ── 4. Lanzamiento y Control (ProcessManager) ────────────────────────
-    manager = ProcessManager(
-        all_symbols, NUM_WORKERS, credentials, stop_event, metrics_queue
-    )
-    manager.start_all()
+        # ── 2. Inicialización de Métricas Centralizadas ──────────────────────
+        metrics_queue = setup_central_metrics(stop_event)
 
-    log.info("🔥 Sistema ONLINE. Monitoreando salud y horario...")
-    try:
-        while not stop_event.is_set():
-            # 1. Verificar si el mercado ya cerró
-            if not is_market_open(MARKET_END):
-                log.info(
-                    "🔔 Mercado cerrado (%s). Iniciando apagado programado...",
-                    MARKET_END
-                )
-                stop_event.set()
-                break
-
-            # 2. Watchdog de salud
-            try:
-                manager.check_health()
-            except Exception as e:  # pylint: disable=broad-except
-                log.error("Error en el monitoreo de salud: %s", e)
-
-            # 3. Espera controlada (10s)
-            for _ in range(10):
-                if stop_event.is_set():
-                    break
-                time.sleep(1)
-
-    except KeyboardInterrupt:
-        log.warning("⚠️ Interrupción manual detectada (Ctrl+C).")
-        stop_event.set()
-    finally:
-        # ── 5. Shutdown Limpio ───────────────────────────────────────────────
-        manager.join_all()
-
-        # ── 6. Unificación Automática ────────────────────────────────────────
+        # ── 3. Inicialización Integral ───────────────────────────────────────
         try:
-            date_str = datetime.now().strftime("%Y%m%d")
-            log.info("📦 Iniciando unificación automática para %s...", date_str)
-            unify_day(date_str, PARQUET_DIR, delete_chunks=True)
-        except Exception as e:  # pylint: disable=broad-except
-            log.error("❌ Falló la unificación automática: %s", e)
+            all_symbols, credentials = prepare_system()
+        except Exception as exc:  # pylint: disable=broad-except
+            log.error("💥 Error crítico al preparar el sistema: %s", exc)
+            log.info("💤 Reintentando en el próximo ciclo...")
+            time.sleep(60)
+            continue
 
-        log.info("🏁 Sistema MD Logger finalizado.")
+        # ── 4. Lanzamiento y Control (ProcessManager) ────────────────────────
+        manager = ProcessManager(
+            all_symbols, NUM_WORKERS, credentials, stop_event, metrics_queue
+        )
+        manager.start_all()
+
+        log.info("🔥 Sistema ONLINE. Monitoreando salud y horario...")
+        try:
+            while not stop_event.is_set():
+                # 1. Verificar si el mercado ya cerró
+                if not is_market_open(MARKET_END):
+                    log.info(
+                        "🔔 Mercado cerrado (%s). Iniciando apagado programado...",
+                        MARKET_END
+                    )
+                    stop_event.set()
+                    break
+
+                # 2. Watchdog de salud
+                try:
+                    manager.check_health()
+                except Exception as e:  # pylint: disable=broad-except
+                    log.error("Error en el monitoreo de salud: %s", e)
+
+                # 3. Espera controlada (10s)
+                for _ in range(10):
+                    if stop_event.is_set():
+                        break
+                    time.sleep(1)
+
+        except KeyboardInterrupt:
+            log.warning("⚠️ Interrupción manual detectada (Ctrl+C).")
+            stop_event.set()
+        finally:
+            # ── 5. Shutdown Limpio ───────────────────────────────────────────────
+            manager.join_all()
+
+            # ── 6. Unificación Automática ────────────────────────────────────────
+            # Solo unificamos si el mercado ya cerró (evita unificar en reinicios por error)
+            if not is_market_open(MARKET_END):
+                try:
+                    date_str = datetime.now().strftime("%Y%m%d")
+                    log.info(
+                        "📦 Mercado cerrado. Iniciando unificación automática para %s...", date_str
+                    )
+                    unify_day(date_str, PARQUET_DIR, delete_chunks=True)
+                except Exception as e:  # pylint: disable=broad-except
+                    log.error("❌ Falló la unificación automática: %s", e)
+
+            log.info("💤 Jornada finalizada. Esperando apertura del próximo día...")
+
+        # Si se activó el stop_event por una señal externa (no por horario), rompemos el bucle
+        # Nota: En Windows, KeyboardInterrupt a veces se propaga de forma distinta,
+        # pero el stop_event.is_set() captura la intención de apagado.
+        # Si queremos que siga al día siguiente tras un cierre programado, NO debemos romper.
+        # Solo rompemos si el cierre fue manual (esto es difícil de distinguir sin flags extras,
+        # pero usualmente si el stop_event se activa fuera de is_market_open, es manual).
+        # Para simplificar: el usuario pidió autonomía.
+        # Si quiere apagar usará Ctrl+C dos veces o matará el proceso.
+        if not is_market_open(MARKET_END):
+            # Fue cierre programado, NO rompemos el bucle While True.
+            continue
+        else:
+            # Fue cierre manual o error crítico antes de tiempo.
+            break
+
+    log.info("🏁 Sistema MD Logger finalizado.")
 
 
 if __name__ == "__main__":

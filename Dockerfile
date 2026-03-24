@@ -5,40 +5,33 @@
 
 FROM python:3.11-slim
 
-# Metadata
-LABEL maintainer="MD Logger" \
-      description="Market Data Logger ROFEX/XOMS via pyRofex WebSockets"
+LABEL maintainer="md_logger2" \
+    description="Market Data Logger ROFEX/XOMS via pyRofex WebSockets"
 
-# Variables de entorno del sistema
+# 1. Variables de entorno - Unifica la ruta aquí
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    ENV PARQUET_DIR=/app/data/marketdata
+    DATA_DIR=/data/marketdata
+    TZ=America/Cordoba 
 
-    RUN mkdir -p /app/data/marketdata
-    VOLUME ["/app/data/marketdata"]
 
-# Directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para pyarrow
+# 2. Solo librerías necesarias
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar e instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el script principal y el .env (si existe localmente)
 COPY main.py .
-COPY .env* ./
+# Recomiendo manejar el .env desde fuera, no copiarlo dentro de la imagen.
 
-# Puerto de métricas (opcional para futura integración con Prometheus)
-# EXPOSE 8000
+# 3. Define UN SOLO punto de persistencia
+VOLUME ["/data/marketdata"]
 
-# Señal de parada: Docker enviará SIGTERM antes de SIGKILL
 STOPSIGNAL SIGTERM
 
-# Comando de inicio
 CMD ["python", "-u", "main.py"]

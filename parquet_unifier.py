@@ -24,7 +24,7 @@ logger = logging.getLogger("unifier")
 
 def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
     """
-    Unifica los chunks de una fecha dada.
+    Unifica los chunks de una fecha dada, soportando anexión incremental.
     date_str: Formato YYYYMMDD
     """
     data_path = Path(base_dir)
@@ -33,12 +33,13 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
         return
 
     # 1. Escaneo de Chunks
-    # Ejemplo: chunk_w0_20260319_103113_662508_00000.parquet
     pattern = f"chunk_w*_{date_str}_*.parquet"
     chunk_files = list(data_path.glob(pattern))
+    output_name = f"marketdata_{date_str}.parquet"
+    output_path = data_path / output_name
 
     if not chunk_files:
-        logger.warning("⚠️ No se encontraron chunks para la fecha %s.", date_str)
+        logger.warning("⚠️ No se encontraron nuevos chunks para la fecha %s.", date_str)
         return
 
     logger.info(
@@ -48,12 +49,23 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
 
     # 2. Carga y Consolidación
     all_dfs = []
-    total_rows_original = 0
+    total_rows_input = 0
 
+    # A. Cargar archivo consolidado previo si existe (Lógica de Append)
+    if output_path.exists():
+        try:
+            df_base = pd.read_parquet(output_path)
+            all_dfs.append(df_base)
+            total_rows_input += len(df_base)
+            logger.info("📚 Archivo base cargado: %s (%d filas)", output_name, len(df_base))
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("❌ No se pudo leer el archivo base existente: %s", exc)
+
+    # B. Cargar nuevos chunks
     try:
         for f in chunk_files:
             df = pd.read_parquet(f)
-            total_rows_original += len(df)
+            total_rows_input += len(df)
             all_dfs.append(df)
             logger.debug("   + Leído %s (%d filas)", f.name, len(df))
 
@@ -62,16 +74,19 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
 
         full_df = pd.concat(all_dfs, ignore_index=True)
 
-        # 3. Ordenamiento Determinista
-        # Priorizamos el timestamp de llegada al sistema para la cronología
-        logger.info("⚖️ Ordenando registros por '_arrival_ts_ms'...")
+        # 3. Deduplicación y Ordenamiento
+        initial_count = len(full_df)
+        logger.info("💎 Eliminando duplicados (basado en '_arrival_ts_ms' e 'instrumentId')...")
+        full_df = full_df.drop_duplicates(subset=["_arrival_ts_ms", "instrumentId"])
+        final_count = len(full_df)
+        if initial_count > final_count:
+            logger.info("✨ Se eliminaron %d registros duplicados.", initial_count - final_count)
+
+        logger.info("⚖️ Re-ordenando registros por '_arrival_ts_ms'...")
         full_df = full_df.sort_values(by="_arrival_ts_ms", ascending=True)
 
         # 4. Exportación
-        output_name = f"marketdata_{date_str}.parquet"
-        output_path = data_path / output_name
-
-        logger.info("💾 Guardando archivo unificado: %s", output_name)
+        logger.info("💾 Guardando archivo unificado (incremental): %s", output_name)
         full_df.to_parquet(
             output_path,
             engine="pyarrow",
@@ -83,21 +98,46 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
         unified_df = pd.read_parquet(output_path)
         rows_unified = len(unified_df)
 
-        if rows_unified == total_rows_original:
-            logger.info("✅ Validación exitosa: %d filas procesadas.", rows_unified)
+        if rows_unified >= final_count:
+            # --- Chequeo de Seguridad Adicional ---
+            logger.info("🛡️  Iniciando chequeo de seguridad de datos...")
+            all_chunks_verified = True
+            for f in chunk_files:
+                df_chunk = pd.read_parquet(f)
+                # Obtenemos llaves únicas del chunk
+                chunk_keys = df_chunk[["_arrival_ts_ms", "instrumentId"]].drop_duplicates()
+                # Verificamos si existen en el maestro
+                merged = pd.merge(
+                    chunk_keys,
+                    unified_df[["_arrival_ts_ms", "instrumentId"]],
+                    on=["_arrival_ts_ms", "instrumentId"],
+                    how="inner"
+                )
+                if len(merged) != len(chunk_keys):
+                    logger.error(
+                        "❌ Falla de seguridad: El chunk %s no está totalmente "
+                        "contenido en el maestro.",
+                        f.name
+                    )
+                    all_chunks_verified = False
+                    break
+            if not all_chunks_verified:
+                logger.warning(
+                    "⚠️ No se eliminarán los chunks debido a falla en el chequeo de seguridad."
+                )
+                return
 
+            logger.info("✅ Chequeo de seguridad completado. Datos confirmados en disco.")
             if delete_chunks:
-                logger.info("🧹 Eliminando %d chunks originales...", len(chunk_files))
+                logger.info("🧹 Eliminando %d chunks procesados...", len(chunk_files))
                 for f in chunk_files:
                     f.unlink()
-                logger.info("✅ Limpieza completada: Chunks eliminados definitivamente.")
+                logger.info("✅ Limpieza completada.")
         else:
             logger.error(
-                "❌ Error de validación: Filas unificadas (%d) != Originales (%d).",
-                rows_unified, total_rows_original
+                "❌ Error de validación: Filas en disco (%d) inconsistentes con el proceso.",
+                rows_unified
             )
-            logger.warning("⚠️ No se eliminaron los chunks por error de validación.")
-
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("💥 Error crítico durante la unificación: %s", exc, exc_info=True)
 

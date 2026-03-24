@@ -11,7 +11,7 @@ import signal
 import sys
 import time
 import typing
-from datetime import datetime, time as dt_time
+from datetime import datetime, timedelta, time as dt_time
 
 from config import log
 
@@ -52,27 +52,32 @@ def setup_signals(stop_event: typing.Any) -> None:
 
 def wait_for_market_open(start_time: dt_time, stop_event: typing.Any) -> None:
     """
-    Si la hora actual es previa a start_time, pone el hilo a dormir en intervalos
-    cortos comprobando el stop_event para permitir un apagado inmediato.
+    Si la hora actual es previa a start_time (o posterior, esperando al día siguiente),
+    pone el hilo a dormir en intervalos cortos comprobando el stop_event para permitir 
+    un apagado inmediato.
     """
     now = datetime.now()
     market_start_dt = datetime.combine(now.date(), start_time)
 
-    if now < market_start_dt:
-        wait_secs = (market_start_dt - now).total_seconds()
-        log.info(
-            "💤 Mercado cerrado. Esperando hasta las %s (%.0f seg)...",
-            start_time,
-            wait_secs
-        )
+    # Si ya pasó la hora de apertura de hoy, buscamos la de mañana
+    if now >= market_start_dt:
+        market_start_dt += timedelta(days=1)
+        log.info("🕒 La hora de apertura de hoy ya pasó. Programando para mañana.")
 
-        while datetime.now() < market_start_dt and not stop_event.is_set():
-            time.sleep(1.0)
+    wait_secs = (market_start_dt - now).total_seconds()
+    log.info(
+        "💤 Mercado cerrado. Esperando hasta las %s (%.0f seg)...",
+        market_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        wait_secs
+    )
 
-        if stop_event.is_set():
-            log.info("🛑 Espera interrumpida por señal de apagado.")
-        else:
-            log.info("🌅 Hora de inicio alcanzada. Procediendo con la ejecución.")
+    while datetime.now() < market_start_dt and not stop_event.is_set():
+        time.sleep(1.0)
+
+    if stop_event.is_set():
+        log.info("🛑 Espera interrumpida por señal de apagado.")
+    else:
+        log.info("🌅 Hora de inicio alcanzada. Procediendo con la ejecución.")
 
 
 def is_market_open(end_time: dt_time) -> bool:

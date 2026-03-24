@@ -1,0 +1,20 @@
+networks:
+  directus_directus:
+    external: true
+
+services:
+  md_logger:
+    image: md_logger2
+    container_name: MD-Logger-Alamain-V2
+    build:
+      context: .
+    ports:
+      - 6002:6002
+    networks:
+      directus_directus:
+        ipv4_address: 172.18.0.21
+    volumes:
+      - .:/app
+      - ./data:/app/data:rw
+      - ./data/marketdata:/app/data/marketdata:rw
+    restart: unless-stopped
