@@ -13,6 +13,10 @@ parquet_data/
 marketdata/
 data/
 
+# Windows
+[Dd]esktop.ini
+Thumbs.db
+
 # IDE
 .vscode/
 .idea/
