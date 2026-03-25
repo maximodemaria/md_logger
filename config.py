@@ -53,12 +53,24 @@ MARKET_DATA_ENTRIES = [
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
+import logging.handlers
+
+# Asegurar que el directorio de logs existe
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
+        logging.handlers.TimedRotatingFileHandler(
+            filename=os.path.join(LOGS_DIR, "md_logger.log"),
+            when="D",
+            interval=1,
+            backupCount=30,
+            encoding="utf-8"
+        )
     ],
 )
 log = logging.getLogger("md_logger")
