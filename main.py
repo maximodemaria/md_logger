@@ -107,13 +107,7 @@ def main() -> None:
             log.info("💤 Jornada finalizada. Esperando apertura del próximo día...")
 
         # Si se activó el stop_event por una señal externa (no por horario), rompemos el bucle
-        # Nota: En Windows, KeyboardInterrupt a veces se propaga de forma distinta,
         # pero el stop_event.is_set() captura la intención de apagado.
-        # Si queremos que siga al día siguiente tras un cierre programado, NO debemos romper.
-        # Solo rompemos si el cierre fue manual (esto es difícil de distinguir sin flags extras,
-        # pero usualmente si el stop_event se activa fuera de is_market_open, es manual).
-        # Para simplificar: el usuario pidió autonomía.
-        # Si quiere apagar usará Ctrl+C dos veces o matará el proceso.
         if not is_market_open(MARKET_END):
             # Fue cierre programado, NO rompemos el bucle While True.
             continue
