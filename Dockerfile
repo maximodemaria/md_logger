@@ -11,7 +11,7 @@ LABEL maintainer="md_logger2" \
 # 1. Variables de entorno - Unifica la ruta aquí
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DATA_DIR=/data/marketdata
+    DATA_DIR=/data/marketdata \
     TZ=America/Cordoba 
 
 

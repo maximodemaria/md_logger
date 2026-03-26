@@ -50,23 +50,35 @@ def setup_signals(stop_event: typing.Any) -> None:
     log.info("🛡️  Manejadores de señales registrados (SIGINT/SIGTERM).")
 
 
-def wait_for_market_open(start_time: dt_time, stop_event: typing.Any) -> None:
+def wait_for_market_open(start_time: dt_time, end_time: dt_time, stop_event: typing.Any) -> None:
     """
-    Si la hora actual es previa a start_time (o posterior, esperando al día siguiente),
-    pone el hilo a dormir en intervalos cortos comprobando el stop_event para permitir 
-    un apagado inmediato.
+    Si la hora actual es previa a start_time, espera al inicio de hoy.
+    Si está entre start_time y end_time, inicia inmediatamente.
+    Si es posterior a end_time, espera al inicio del día siguiente.
+    Comprueba el stop_event para permitir un apagado inmediato.
     """
     now = datetime.now()
+    now_time = now.time()
+
+    # ── 1. Caso: Mercado ya está abierto ──
+    if start_time <= now_time < end_time:
+        log.info("🌅 Mercado abierto. Iniciando inmediatamente.")
+        return
+
+    # ── 2. Caso: Mercado cerrado (Pre-apertura o Post-cierre) ──
     market_start_dt = datetime.combine(now.date(), start_time)
 
-    # Si ya pasó la hora de apertura de hoy, buscamos la de mañana
-    if now >= market_start_dt:
+    if now_time >= end_time:
+        # Ya cerró hoy, buscamos el inicio de mañana
         market_start_dt += timedelta(days=1)
-        log.info("🕒 La hora de apertura de hoy ya pasó. Programando para mañana.")
+        log.info("🕒 El mercado ya cerró por hoy. Programando para mañana.")
+    else:
+        # Aún no abre hoy
+        log.info("💤 Mercado aún no abre. Esperando apertura de hoy.")
 
     wait_secs = (market_start_dt - now).total_seconds()
     log.info(
-        "💤 Mercado cerrado. Esperando hasta las %s (%.0f seg)...",
+        "💤 Esperando hasta las %s (%.0f seg)...",
         market_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
         wait_secs
     )

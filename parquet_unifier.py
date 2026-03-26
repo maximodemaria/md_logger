@@ -24,9 +24,9 @@ logger = logging.getLogger("unifier")
 
 def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
     """
-    Unifica los chunks de una fecha dada, soportando anexión incremental.
-    date_str: Formato YYYYMMDD
+    Unifica los chunks de una fecha dada de forma incremental por lotes para ahorrar memoria.
     """
+    batch_size = 100
     data_path = Path(base_dir)
     if not data_path.exists():
         logger.error("❌ El directorio %s no existe.", data_path)
@@ -34,7 +34,7 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
 
     # 1. Escaneo de Chunks
     pattern = f"chunk_w*_{date_str}_*.parquet"
-    chunk_files = list(data_path.glob(pattern))
+    chunk_files = sorted(list(data_path.glob(pattern)))
     output_name = f"marketdata_{date_str}.parquet"
     output_path = data_path / output_name
 
@@ -42,104 +42,92 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
         logger.warning("⚠️ No se encontraron nuevos chunks para la fecha %s.", date_str)
         return
 
-    logger.info(
-        "📂 Encontrados %d chunks para el %s. Iniciando unificación...",
-        len(chunk_files), date_str
-    )
+    total_chunks = len(chunk_files)
+    logger.info("📂 %d chunks encontrados para el %s. Iniciando unificación incremental...", total_chunks, date_str)
 
-    # 2. Carga y Consolidación
-    all_dfs = []
-    total_rows_input = 0
-
-    # A. Cargar archivo consolidado previo si existe (Lógica de Append)
-    if output_path.exists():
-        try:
-            df_base = pd.read_parquet(output_path)
-            all_dfs.append(df_base)
-            total_rows_input += len(df_base)
-            logger.info("📚 Archivo base cargado: %s (%d filas)", output_name, len(df_base))
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("❌ No se pudo leer el archivo base existente: %s", exc)
-
-    # B. Cargar nuevos chunks
+    # Dividir en lotes
+    batches = [chunk_files[i : i + batch_size] for i in range(0, total_chunks, batch_size)]
+    
     try:
+        for idx, batch in enumerate(batches, 1):
+            logger.info("📦 Procesando lote %d/%d (%d archivos nuevos)...", idx, len(batches), len(batch))
+            all_dfs = []
+
+            # A. Cargar archivo base existente
+            if output_path.exists():
+                try:
+                    df_base = pd.read_parquet(output_path)
+                    all_dfs.append(df_base)
+                    logger.debug("   + Base cargada (%d registros)", len(df_base))
+                except Exception as exc:
+                    logger.error("   ❌ Error leyendo base: %s", exc)
+
+            # B. Cargar chunks del lote
+            for f in batch:
+                try:
+                    df_chunk = pd.read_parquet(f)
+                    all_dfs.append(df_chunk)
+                except Exception as exc:
+                    logger.warning("   ⚠️ Error leyendo chunk %s: %s", f.name, exc)
+
+            if not all_dfs:
+                continue
+
+            # C. Consolidación, Deduplicación y Ordenamiento
+            full_df = pd.concat(all_dfs, ignore_index=True)
+            mem_usage = full_df.memory_usage(deep=True).sum() / (1024 * 1024)
+            logger.info("   ⚡ Memoria en RAM: %.2f MB | Registros totales: %d", mem_usage, len(full_df))
+            
+            full_df = full_df.drop_duplicates(subset=["_arrival_ts_ms", "instrumentId"])
+            full_df = full_df.sort_values(by="_arrival_ts_ms", ascending=True)
+
+            # D. Guardar (Sobrescribir parcial)
+            full_df.to_parquet(
+                output_path,
+                engine="pyarrow",
+                compression="zstd",
+                index=False
+            )
+            logger.info("   💾 Guardado parcial en disk: %s", output_name)
+
+            # Liberar memoria explícitamente
+            del all_dfs
+            del full_df
+            import gc
+            gc.collect()
+
+        # 2. Validación de Seguridad (Post-procesamiento completo)
+        logger.info("🛡️  Iniciando validación final de integridad...")
+        
+        # Leemos solo las claves para ahorrar memoria en la validación
+        unified_keys = pd.read_parquet(output_path, columns=["_arrival_ts_ms", "instrumentId"])
+        all_chunks_verified = True
+        
         for f in chunk_files:
-            df = pd.read_parquet(f)
-            total_rows_input += len(df)
-            all_dfs.append(df)
-            logger.debug("   + Leído %s (%d filas)", f.name, len(df))
-
-        if not all_dfs:
-            return
-
-        full_df = pd.concat(all_dfs, ignore_index=True)
-
-        # 3. Deduplicación y Ordenamiento
-        initial_count = len(full_df)
-        logger.info("💎 Eliminando duplicados (basado en '_arrival_ts_ms' e 'instrumentId')...")
-        full_df = full_df.drop_duplicates(subset=["_arrival_ts_ms", "instrumentId"])
-        final_count = len(full_df)
-        if initial_count > final_count:
-            logger.info("✨ Se eliminaron %d registros duplicados.", initial_count - final_count)
-
-        logger.info("⚖️ Re-ordenando registros por '_arrival_ts_ms'...")
-        full_df = full_df.sort_values(by="_arrival_ts_ms", ascending=True)
-
-        # 4. Exportación
-        logger.info("💾 Guardando archivo unificado (incremental): %s", output_name)
-        full_df.to_parquet(
-            output_path,
-            engine="pyarrow",
-            compression="zstd",
-            index=False
-        )
-
-        # 5. Validación y Limpieza
-        unified_df = pd.read_parquet(output_path)
-        rows_unified = len(unified_df)
-
-        if rows_unified >= final_count:
-            # --- Chequeo de Seguridad Adicional ---
-            logger.info("🛡️  Iniciando chequeo de seguridad de datos...")
-            all_chunks_verified = True
-            for f in chunk_files:
-                df_chunk = pd.read_parquet(f)
-                # Obtenemos llaves únicas del chunk
-                chunk_keys = df_chunk[["_arrival_ts_ms", "instrumentId"]].drop_duplicates()
-                # Verificamos si existen en el maestro
-                merged = pd.merge(
-                    chunk_keys,
-                    unified_df[["_arrival_ts_ms", "instrumentId"]],
-                    on=["_arrival_ts_ms", "instrumentId"],
-                    how="inner"
-                )
-                if len(merged) != len(chunk_keys):
-                    logger.error(
-                        "❌ Falla de seguridad: El chunk %s no está totalmente "
-                        "contenido en el maestro.",
-                        f.name
-                    )
-                    all_chunks_verified = False
-                    break
-            if not all_chunks_verified:
-                logger.warning(
-                    "⚠️ No se eliminarán los chunks debido a falla en el chequeo de seguridad."
-                )
-                return
-
-            logger.info("✅ Chequeo de seguridad completado. Datos confirmados en disco.")
+            df_chunk = pd.read_parquet(f, columns=["_arrival_ts_ms", "instrumentId"])
+            merged = pd.merge(
+                df_chunk,
+                unified_keys,
+                on=["_arrival_ts_ms", "instrumentId"],
+                how="inner"
+            )
+            if len(merged) != len(df_chunk):
+                logger.error("   ❌ El chunk %s no está totalmente contenido en el maestro.", f.name)
+                all_chunks_verified = False
+                break
+        
+        if all_chunks_verified:
+            logger.info("✅ Validación exitosa. Todos los datos están asegurados.")
             if delete_chunks:
-                logger.info("🧹 Eliminando %d chunks procesados...", len(chunk_files))
+                logger.info("🧹 Eliminando %d chunks temporales...", total_chunks)
                 for f in chunk_files:
                     f.unlink()
                 logger.info("✅ Limpieza completada.")
         else:
-            logger.error(
-                "❌ Error de validación: Filas en disco (%d) inconsistentes con el proceso.",
-                rows_unified
-            )
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("💥 Error crítico durante la unificación: %s", exc, exc_info=True)
+            logger.warning("⚠️ No se eliminaron los chunks debido a fallas en la validación.")
+
+    except Exception as exc:
+        logger.error("💥 Error crítico (%s): %s", type(exc).__name__, exc, exc_info=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Unificador de chunks MD Logger")

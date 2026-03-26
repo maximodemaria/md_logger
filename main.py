@@ -37,7 +37,7 @@ def main() -> None:
         setup_signals(stop_event)
 
         # ── 1. Espera apertura de mercado ──────────────────────────────────
-        wait_for_market_open(MARKET_START, stop_event)
+        wait_for_market_open(MARKET_START, MARKET_END, stop_event)
 
         # Si durante la espera se recibió una señal de apagado manual (Ctrl+C / SIGTERM)
         if stop_event.is_set():
