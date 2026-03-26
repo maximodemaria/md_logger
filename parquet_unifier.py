@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import gc
 
 # Configuración de Logging
 logging.basicConfig(
@@ -43,14 +44,20 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
         return
 
     total_chunks = len(chunk_files)
-    logger.info("📂 %d chunks encontrados para el %s. Iniciando unificación incremental...", total_chunks, date_str)
+    logger.info(
+        "📂 %d chunks encontrados para el %s. Iniciando unificación incremental...",
+        total_chunks, date_str
+    )
 
     # Dividir en lotes
     batches = [chunk_files[i : i + batch_size] for i in range(0, total_chunks, batch_size)]
-    
+
     try:
         for idx, batch in enumerate(batches, 1):
-            logger.info("📦 Procesando lote %d/%d (%d archivos nuevos)...", idx, len(batches), len(batch))
+            logger.info(
+                "📦 Procesando lote %d/%d (%d archivos nuevos)...",
+                idx, len(batches), len(batch)
+            )
             all_dfs = []
 
             # A. Cargar archivo base existente
@@ -59,7 +66,7 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
                     df_base = pd.read_parquet(output_path)
                     all_dfs.append(df_base)
                     logger.debug("   + Base cargada (%d registros)", len(df_base))
-                except Exception as exc:
+                except Exception as exc:  # pylint: disable=broad-except
                     logger.error("   ❌ Error leyendo base: %s", exc)
 
             # B. Cargar chunks del lote
@@ -67,7 +74,7 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
                 try:
                     df_chunk = pd.read_parquet(f)
                     all_dfs.append(df_chunk)
-                except Exception as exc:
+                except Exception as exc:  # pylint: disable=broad-except
                     logger.warning("   ⚠️ Error leyendo chunk %s: %s", f.name, exc)
 
             if not all_dfs:
@@ -76,8 +83,11 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
             # C. Consolidación, Deduplicación y Ordenamiento
             full_df = pd.concat(all_dfs, ignore_index=True)
             mem_usage = full_df.memory_usage(deep=True).sum() / (1024 * 1024)
-            logger.info("   ⚡ Memoria en RAM: %.2f MB | Registros totales: %d", mem_usage, len(full_df))
-            
+            logger.info(
+                "   ⚡ Memoria en RAM: %.2f MB | Registros totales: %d",
+                mem_usage, len(full_df)
+            )
+
             full_df = full_df.drop_duplicates(subset=["_arrival_ts_ms", "instrumentId"])
             full_df = full_df.sort_values(by="_arrival_ts_ms", ascending=True)
 
@@ -93,16 +103,14 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
             # Liberar memoria explícitamente
             del all_dfs
             del full_df
-            import gc
             gc.collect()
 
         # 2. Validación de Seguridad (Post-procesamiento completo)
         logger.info("🛡️  Iniciando validación final de integridad...")
-        
+
         # Leemos solo las claves para ahorrar memoria en la validación
         unified_keys = pd.read_parquet(output_path, columns=["_arrival_ts_ms", "instrumentId"])
         all_chunks_verified = True
-        
         for f in chunk_files:
             df_chunk = pd.read_parquet(f, columns=["_arrival_ts_ms", "instrumentId"])
             merged = pd.merge(
@@ -115,7 +123,6 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
                 logger.error("   ❌ El chunk %s no está totalmente contenido en el maestro.", f.name)
                 all_chunks_verified = False
                 break
-        
         if all_chunks_verified:
             logger.info("✅ Validación exitosa. Todos los datos están asegurados.")
             if delete_chunks:
@@ -126,7 +133,7 @@ def unify_day(date_str: str, base_dir: str, delete_chunks: bool = True):
         else:
             logger.warning("⚠️ No se eliminaron los chunks debido a fallas en la validación.")
 
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-except
         logger.error("💥 Error crítico (%s): %s", type(exc).__name__, exc, exc_info=True)
 
 if __name__ == "__main__":
