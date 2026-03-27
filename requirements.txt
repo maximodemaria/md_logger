@@ -3,4 +3,3 @@ pandas
 pyarrow
 python-dotenv
 requests
-duckdb
