@@ -13,6 +13,7 @@ import queue
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,8 @@ def worker_process(
     logger.info("🚀 Worker %d iniciando. Tickers: %d", worker_id, len(symbols))
 
     # Colas y directorios
-    parquet_dir = Path(PARQUET_DIR)
+    date_str = datetime.now().strftime("%Y%m%d")
+    parquet_dir = Path(PARQUET_DIR) / date_str
     parquet_dir.mkdir(parents=True, exist_ok=True)
     data_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=BUFFER_SIZE * 5)
     metrics_queue: queue.Queue[tuple[float, float]] = queue.Queue(maxsize=1000)

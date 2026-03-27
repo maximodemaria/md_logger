@@ -7,20 +7,17 @@ from __future__ import annotations
 
 import multiprocessing
 import time
-from datetime import datetime
 
 from config import (
     MARKET_END,
     MARKET_START,
     NUM_WORKERS,
-    PARQUET_DIR,
     log,
 )
 from conexion import prepare_system
 from utils import setup_signals, wait_for_market_open, is_market_open
 from process_manager import ProcessManager
 from stats import setup_central_metrics
-from parquet_unifier import unify_day
 
 
 def main() -> None:
@@ -91,18 +88,6 @@ def main() -> None:
         finally:
             # ── 5. Shutdown Limpio ───────────────────────────────────────────────
             manager.join_all()
-
-            # ── 6. Unificación Automática ────────────────────────────────────────
-            # Solo unificamos si el mercado ya cerró (evita unificar en reinicios por error)
-            if not is_market_open(MARKET_END):
-                try:
-                    date_str = datetime.now().strftime("%Y%m%d")
-                    log.info(
-                        "📦 Mercado cerrado. Iniciando unificación automática para %s...", date_str
-                    )
-                    unify_day(date_str, PARQUET_DIR, delete_chunks=True)
-                except Exception as e:  # pylint: disable=broad-except
-                    log.error("❌ Falló la unificación automática: %s", e)
 
             log.info("💤 Jornada finalizada. Esperando apertura del próximo día...")
 
