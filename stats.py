@@ -16,7 +16,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from config import GAP_WARN_SECS, LOGS_DIR, METRICS_INTERVAL_SECS
+from config import (
+    GAP_LOG_END,
+    GAP_LOG_START,
+    GAP_WARN_SECS,
+    LOGS_DIR,
+    METRICS_INTERVAL_SECS,
+)
 
 
 class WorkerStats:
@@ -67,7 +73,10 @@ def metrics_thread(
         try:
             latency_ms, gap = metrics_queue.get(timeout=0.2)
             if gap > GAP_WARN_SECS and stats.msgs > 0:
-                logger.warning("⚠️ Gap de %.3fs detectado en W%d", gap, worker_id)
+                # Validar horario para reportar gaps
+                now_time = datetime.now().time()
+                if GAP_LOG_START <= now_time <= GAP_LOG_END:
+                    logger.warning("⚠️ Gap de %.3fs detectado en W%d", gap, worker_id)
 
             stats.update(latency_ms, gap)
         except queue.Empty:

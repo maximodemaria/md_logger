@@ -53,27 +53,36 @@ def setup_signals(stop_event: typing.Any) -> None:
 def wait_for_market_open(start_time: dt_time, end_time: dt_time, stop_event: typing.Any) -> None:
     """
     Si la hora actual es previa a start_time, espera al inicio de hoy.
-    Si está entre start_time y end_time, inicia inmediatamente.
-    Si es posterior a end_time, espera al inicio del día siguiente.
+    Si está entre start_time y end_time (y es día de semana), inicia inmediatamente.
+    Si es posterior a end_time o es fin de semana, busca el próximo día hábil.
     Comprueba el stop_event para permitir un apagado inmediato.
     """
     now = datetime.now()
     now_time = now.time()
 
-    # ── 1. Caso: Mercado ya está abierto ──
-    if start_time <= now_time < end_time:
+    # ── 1. Caso: Mercado ya está abierto (y es lunes a viernes) ──
+    if now.weekday() < 5 and start_time <= now_time < end_time:
         log.info("🌅 Mercado abierto. Iniciando inmediatamente.")
         return
 
-    # ── 2. Caso: Mercado cerrado (Pre-apertura o Post-cierre) ──
+    # ── 2. Caso: Mercado cerrado o Fin de semana ──
+    # Empezamos calculando el inicio tentativo para hoy
     market_start_dt = datetime.combine(now.date(), start_time)
 
-    if now_time >= end_time:
-        # Ya cerró hoy, buscamos el inicio de mañana
+    # Si ya cerró hoy, O aún no abre pero ya es fin de semana, buscamos el próximo lunes
+    if now_time >= end_time or now.weekday() >= 5:
+        # Avanzar al menos un día
         market_start_dt += timedelta(days=1)
-        log.info("🕒 El mercado ya cerró por hoy. Programando para mañana.")
+        # Seguir avanzando si sigue siendo fin de semana (sábado -> domingo -> lunes)
+        while market_start_dt.weekday() >= 5:
+            market_start_dt += timedelta(days=1)
+
+        log.info(
+            "🕒 Programando para el próximo día hábil: %s", 
+            market_start_dt.strftime("%A %Y-%m-%d")
+        )
     else:
-        # Aún no abre hoy
+        # Es día de semana pero temprano (antes de las 10:25)
         log.info("💤 Mercado aún no abre. Esperando apertura de hoy.")
 
     wait_secs = (market_start_dt - now).total_seconds()

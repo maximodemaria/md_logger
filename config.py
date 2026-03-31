@@ -7,6 +7,7 @@ Contiene: constantes globales, setup de logging y carga de variables de entorno.
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import sys
 from datetime import time
@@ -34,6 +35,10 @@ METRICS_INTERVAL_SECS: float = 1.0
 MARKET_START = time(10, 25)
 MARKET_END = time(17, 5)
 
+# Horario para reportar Gaps de WebSocket
+GAP_LOG_START = time(10, 30)
+GAP_LOG_END = time(17, 0)
+
 # Campos de Market Data a suscribir
 MARKET_DATA_ENTRIES = [
     pyRofex.MarketDataEntry.BIDS,
@@ -53,7 +58,6 @@ MARKET_DATA_ENTRIES = [
 # ──────────────────────────────────────────────
 # LOGGING
 # ──────────────────────────────────────────────
-import logging.handlers
 
 # Asegurar que el directorio de logs existe
 os.makedirs(LOGS_DIR, exist_ok=True)
